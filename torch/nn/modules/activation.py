@@ -1038,6 +1038,7 @@ class MultiheadAttention(Module):
 
     """
 
+    # batch_first 属性在模型的生命周期中属于常量
     __constants__ = ["batch_first"]
     bias_k: Optional[torch.Tensor]
     bias_v: Optional[torch.Tensor]
@@ -1061,7 +1062,9 @@ class MultiheadAttention(Module):
                 f"embed_dim and num_heads must be greater than 0,"
                 f" got embed_dim={embed_dim} and num_heads={num_heads} instead"
             )
+        # factory_kwargs 是一个参数字典
         factory_kwargs = {"device": device, "dtype": dtype}
+        # 在子类中调用父类的 __init__ 方法
         super().__init__()
         self.embed_dim = embed_dim
         self.kdim = kdim if kdim is not None else embed_dim
@@ -1077,6 +1080,8 @@ class MultiheadAttention(Module):
         ), "embed_dim must be divisible by num_heads"
 
         if not self._qkv_same_embed_dim:
+            # 当 embed_dim 与 kdim 或 vdim 不同时, k_proj_weight 和 v_proj_weight 用于将 kdim 和 vdim 映射为 embed_dim
+            # pytorch 应该使用 register_parameter 方法和 Parameter 类管理模型参数
             self.q_proj_weight = Parameter(
                 torch.empty((embed_dim, embed_dim), **factory_kwargs)
             )
@@ -1096,6 +1101,7 @@ class MultiheadAttention(Module):
             self.register_parameter("v_proj_weight", None)
 
         if bias:
+            # 由于 bias 的作用是映射之后的偏移, 即使 kdim 和 vdim 与 embed_dim 不同, 映射之后也都转化为 embed_dim
             self.in_proj_bias = Parameter(torch.empty(3 * embed_dim, **factory_kwargs))
         else:
             self.register_parameter("in_proj_bias", None)
@@ -1123,6 +1129,7 @@ class MultiheadAttention(Module):
 
         if self.in_proj_bias is not None:
             constant_(self.in_proj_bias, 0.0)
+            # 当 bias == True 时, out_proj.bias 才需要被初始化
             constant_(self.out_proj.bias, 0.0)
         if self.bias_k is not None:
             xavier_normal_(self.bias_k)
@@ -1207,6 +1214,7 @@ class MultiheadAttention(Module):
             .. note::
                 `batch_first` argument is ignored for unbatched inputs.
         """  # noqa: B950
+        # 记录不适用 fast path 的原因
         why_not_fast_path = ""
         if (
             (attn_mask is not None and torch.is_floating_point(attn_mask))
@@ -1215,6 +1223,7 @@ class MultiheadAttention(Module):
         ):
             why_not_fast_path = "floating-point masks are not supported for fast path."
 
+        # 标识 Tensor 是否携带 batch 维度
         is_batched = query.dim() == 3
 
         key_padding_mask = F._canonical_mask(
@@ -1277,6 +1286,7 @@ class MultiheadAttention(Module):
             why_not_fast_path = "autocast is enabled"
 
         if not why_not_fast_path:
+            # why_not_fast_path 是空字符串
             tensor_args = (
                 query,
                 key,
@@ -1334,6 +1344,7 @@ class MultiheadAttention(Module):
 
         if self.batch_first and is_batched:
             # make sure that the transpose op does not affect the "is" property
+            # 保证 Tensor 的第一个维度不是 batch
             if key is value:
                 if query is key:
                     query = key = value = query.transpose(1, 0)
@@ -1392,6 +1403,7 @@ class MultiheadAttention(Module):
                 is_causal=is_causal,
             )
         if self.batch_first and is_batched:
+            # 将转置后的 Tensor 恢复到转置前
             return attn_output.transpose(1, 0), attn_output_weights
         else:
             return attn_output, attn_output_weights

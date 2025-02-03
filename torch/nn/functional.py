@@ -5963,6 +5963,7 @@ def _canonical_mask(
                     f"Support for mismatched {mask_name} and {other_name} "
                     "is deprecated. Use same type for both instead."
                 )
+        # 若 mask 为 bool 类型, 则将其转换为 float 类型
         if not _mask_is_float:
             mask = torch.zeros_like(mask, dtype=target_type).masked_fill_(
                 mask, float("-inf")
@@ -6114,6 +6115,7 @@ def multi_head_attention_forward(
         out_proj_bias,
     )
     if has_torch_function(tens_ops):
+        # 调用类型自定义的 __torch_function__ 方法 torch API 指定功能
         return handle_torch_function(
             multi_head_attention_forward,
             tens_ops,
@@ -6163,6 +6165,7 @@ def multi_head_attention_forward(
     tgt_len, bsz, embed_dim = query.shape
     src_len, _, _ = key.shape
 
+    # 对 mask 进行预处理, 预处理后的 mask 为 float 类型
     key_padding_mask = _canonical_mask(
         mask=key_padding_mask,
         mask_name="key_padding_mask",
@@ -6184,6 +6187,7 @@ def multi_head_attention_forward(
         # indicator to SDPA.
         attn_mask = None
     else:
+        # 对 mask 进行预处理, 预处理后的 mask 为 float 类型
         attn_mask = _canonical_mask(
             mask=attn_mask,
             mask_name="attn_mask",
@@ -6227,6 +6231,7 @@ def multi_head_attention_forward(
         assert (
             in_proj_weight is not None
         ), "use_separate_proj_weight is False but in_proj_weight is None"
+        # 将线性映射操作封装为函数
         q, k, v = _in_projection_packed(query, key, value, in_proj_weight, in_proj_bias)
     else:
         assert (
@@ -6242,6 +6247,7 @@ def multi_head_attention_forward(
             b_q = b_k = b_v = None
         else:
             b_q, b_k, b_v = in_proj_bias.chunk(3)
+        # 将线性映射操作封装为函数
         q, k, v = _in_projection(
             query,
             key,
@@ -6264,6 +6270,7 @@ def multi_head_attention_forward(
                 raise RuntimeError(
                     f"The shape of the 2D attn_mask is {attn_mask.shape}, but should be {correct_2d_size}."
                 )
+            # 若 attn_mask 是二维张量, 在第 0 维前扩展一维, 使之成为三维张量
             attn_mask = attn_mask.unsqueeze(0)
         elif attn_mask.dim() == 3:
             correct_3d_size = (bsz * num_heads, tgt_len, src_len)
@@ -6332,6 +6339,7 @@ def multi_head_attention_forward(
             key_padding_mask = pad(key_padding_mask, (0, 1))
 
     # update source sequence length after adjustments
+    # 若 add_zero_attn == True, src_len 将被加 1
     src_len = k.size(1)
 
     # merge key padding and attention masks
@@ -6350,6 +6358,7 @@ def multi_head_attention_forward(
             attn_mask = attn_mask + key_padding_mask
 
     # adjust dropout probability
+    # dropout_p 仅用于防止训练过拟合
     if not training:
         dropout_p = 0.0
 
@@ -6366,17 +6375,21 @@ def multi_head_attention_forward(
         ), "FIXME: is_causal not implemented for need_weights"
 
         if attn_mask is not None:
+            # attn_mask 中不参与 attention 的那些元素的值为 -inf, 其加任何数依然为 -inf
             attn_output_weights = torch.baddbmm(
                 attn_mask, q_scaled, k.transpose(-2, -1)
             )
         else:
             attn_output_weights = torch.bmm(q_scaled, k.transpose(-2, -1))
+        # attn_output_weights 中值为 -inf 的元素, 经过 softmax 运算后, 其值变为 0
         attn_output_weights = softmax(attn_output_weights, dim=-1)
         if dropout_p > 0.0:
             attn_output_weights = dropout(attn_output_weights, p=dropout_p)
 
         attn_output = torch.bmm(attn_output_weights, v)
 
+        # .contiguous() 用于消除 .transpose() 造成的张量在内存中不连续的问题, 为后续的 .view() 做准备
+        # .contiguous().view() 等价于 .reshape()
         attn_output = (
             attn_output.transpose(0, 1).contiguous().view(tgt_len * bsz, embed_dim)
         )
